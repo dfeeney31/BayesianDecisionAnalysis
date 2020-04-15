@@ -1,0 +1,40 @@
+---
+title: "Chp3"
+author: "Dan Feeney"
+date: "4/15/2020"
+output: html_document
+---
+## Chapter 3 notes
+
+### Sampling from a grid-approximate posterior and sample 10000 values with replacement
+
+```{r echo = TRUE}
+library(rethinking)
+p_grid <- seq( from=0 , to=1 , length.out=1000 )
+prob_p <- rep( 1 , 1000 )
+prob_data <- dbinom( 6 , size=9 , prob=p_grid )
+posterior <- prob_data * prob_p
+posterior <- posterior / sum(posterior)
+
+samples <- sample( p_grid , prob=posterior , size=1e4 , replace=TRUE )
+plot(samples)
+dens(samples)
+```
+
+## the following answers questions based on the posterior generated above.
+### based on 6 water landings in 9 tosses, this is the posterior distribution and the code below
+### shows how you would calcualte the % of the posterior laying above or below some threshold, which
+### is an estimate of the true proportion of the world covered in water. 
+```{r echo = TRUE}
+# add up posterior probability where p < 0.5 
+sum( posterior[ p_grid < 0.5 ] )
+
+# how many samples are between 0.5 and 0.75?
+sum( samples > 0.5 & samples < 0.75 ) / 1e4
+
+# what is the boundary for lower 80% of posterior?
+quantile(samples, 0.8)
+# quantiles for an interval
+quantile(samples, c(0.1,0.9))
+```
+
