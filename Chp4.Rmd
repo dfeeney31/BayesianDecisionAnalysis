@@ -217,13 +217,13 @@ head(post)
 N <- 30
 dN <- d2[ 1:N , ]
 mN <- quap(
-alist(
-height ~ dnorm( mu , sigma ) ,
-mu <- a + b*( weight - mean(weight) ) ,
-a ~ dnorm( 178 , 20 ) ,
-b ~ dlnorm( 0 , 1 ) ,
-sigma ~ dunif( 0 , 50 )
-) , data=dN )
+  alist(
+      height ~ dnorm( mu , sigma ) ,
+      mu <- a + b*( weight - mean(weight) ) ,
+      a ~ dnorm( 178 , 20 ) ,
+      b ~ dlnorm( 0 , 1 ) ,
+      sigma ~ dunif( 0 , 50 )
+    ) , data=dN )
 
 # extract 20 samples from the posterior 4.49
 post <- extract.samples( mN , n=20 )
@@ -255,4 +255,131 @@ plot( height ~ weight , d2 , type="n" )
 for ( i in 1:100 )
 points( weight.seq , mu[i,] , pch=16 , col=col.alpha(rangi2,0.1) )
 # plots distribution of mu for each weight between 25 and 70. 
+
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean ) #compute mean of each columns (2) of mu
+mu.PI <- apply( mu , 2 , PI , prob=0.89 ) #cmopute 89% PI at each value
+
+# plot raw data 4.57
+# fading out points to make line and interval more visible
+plot( height ~ weight , data=d2 , col=col.alpha(rangi2,0.5) )
+# plot the MAP line, aka the mean mu for each weight
+lines( weight.seq , mu.mean )
+# plot a shaded region for 89%
+shade( mu.PI , weight.seq, add = TRUE )
+```
+
+## the below code replicates what the function link does 
+## general overview: 1) use link to generate posterior distributions for mu, pass it new horizontal axis values for you to plot the posterior prediction against. 2) use mean or PI to find summary of mu for each value of the predictor, 3) use lines and shade to plot 
+```{r echo = TRUE}
+post <- extract.samples(lin.mod)
+mu.link <- function(weight) post$a + post$b*( weight - xbar )
+weight.seq <- seq( from=25 , to=70 , by=1 )
+mu <- sapply( weight.seq , mu.link )
+mu.mean <- apply( mu , 2 , mean )
+mu.CI <- apply( mu , 2 , PI , prob=0.89 )
+
+```
+
+## to get prediction intervals across all heights (not just the mean), the sigma needs to be incorporated
+### sample from Gaussian distribution with mean mu and sigma samples 
+```{r echo = TRUE}
+sim.height <- sim(lin.mod , data=list(weight=weight.seq) ) #simulates heights, not distributions of plausible average heights
+str(sim.height)
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 ) #summarize these heights (get the PI for the)
+
+#plotting
+# plot raw data 
+plot( height ~ weight , d2 , col=col.alpha(rangi2,0.5) )
+lines( weight.seq , mu.mean ) # draw MAP line
+shade( mu.HPDI , weight.seq )# draw HPDI region for line
+# draw PI region for simulated heights
+shade( height.PI , weight.seq )
+```
+
+
+## polynomial regression and b-line splines
+```{r echo = TRUE}
+plot(d$height, d$weight) #leaving young children in results in a curved fit
+#fit with second order polynomial a + B1Xi + B2Xi^2. First standardize your variables
+
+d$weight_s <- ( d$weight - mean(d$weight) )/sd(d$weight) #standardizing variables
+d$weight_s2 <- d$weight_s^2
+
+polymod <- quap(
+  alist(
+      height ~ dnorm( mu , sigma ) ,
+      mu <- a + b1*weight_s + b2*weight_s2 ,
+      a ~ dnorm( 178 , 20 ) ,
+      b1 ~ dlnorm( 0 , 1 ) ,
+      b2 ~ dnorm( 0 , 1 ) ,
+      sigma ~ dunif( 0 , 50 )
+    ), data = d
+)
+precis(polymod)
+
+```
+
+``` {R echo = TRUE}
+weight.seq <- seq( from=-2.2 , to=2 , length.out=30 ) #SEt grid of length 30 for the Z scores of weight from standardization above
+pred_dat <- list( weight_s=weight.seq , weight_s2=weight.seq^2 )
+mu <- link( polymod , data=pred_dat ) #generate posterior distributions for the range of weights defined above
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( polymod , data=pred_dat )
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+
+plot( height ~ weight_s , d , col=col.alpha(rangi2,0.5) ) 
+lines( weight.seq , mu.mean )
+shade( mu.PI , weight.seq )
+shade( height.PI , weight.seq )
+
+# to recover the non-standardized values of weight
+plot( height ~ weight_s , d , col=col.alpha(rangi2,0.5) , xaxt="n" )
+at <- c(-2,-1,0,1,2) 
+labels <- at*sd(d$weight) + mean(d$weight)
+axis( side=1 , at=at , labels=round(labels,1) )
+lines( weight.seq , mu.mean )
+shade( mu.PI , weight.seq )
+shade( height.PI , weight.seq )
+```
+
+## Splines
+## B splines stand for basis splines, which divide the full range into parts and assign a parameter value to each part.
+### This is done by creating a series of synthetic predictor variables which turn parameters on or off. Each variable is a basis function. The result is similar, MUi = alpha + w1Bi,1 + w2Bi,2 +...
+### How this is done: divide the graph into pivot points or knots
+```{r echo = TRUE}
+data(cherry_blossoms)
+d <- cherry_blossoms
+precis(d)
+plot(d$year, d$temp)
+
+
+d2 <- d[ complete.cases(d$temp) , ] # complete cases on temp
+num_knots <- 15
+knot_list <- quantile( d2$year , probs=seq(0,1,length.out=num_knots) )
+# R has function to build basis functions for number of knots and degree you choose.
+# B will have rows for each year and the column is a basis function
+library(splines)
+B <- bs(d2$year,
+knots=knot_list[-c(1,num_knots)] ,
+degree=3 , intercept=TRUE )
+
+plot( NULL , xlim=range(d2$year) , ylim=c(0,1) , xlab="year" , ylab="basis value")
+for ( i in 1:ncol(B) ) lines( d2$year , B[,i] )
+```
+## example questions, say height is better assoc with log(weight). Fit quap with this 
+```{r echo = TRUE}
+d <- Howell1
+logMod <- quap(
+  alist(
+      height ~ dnorm( mu , sigma ) ,
+      mu <- a + (log(weight) - mean(log(weight))),
+      a ~ dnorm( 178 , 20 ) ,
+      b ~ dlnorm( 0 , 1 ),
+      sigma ~ dunif( 0 , 50 )
+    ), data = d
+)
+precis(logMod)
+
 ```
