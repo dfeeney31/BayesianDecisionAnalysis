@@ -383,3 +383,56 @@ logMod <- quap(
 precis(logMod)
 
 ```
+
+## Homework 
+```{r echo = TRUE}
+rm(list=ls())
+data("Howell1")
+d <- Howell1
+d <- subset(d, d$age > 18)
+xbar <- mean(d$weight)
+# first calcualte the posterior using Quap
+linmod <- quap(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + b*(weight - xbar),
+    a ~ dnorm(178, 20),
+    b ~ dlnorm(0,1),
+    sigma ~ dunif(0, 50)
+  ), data = d
+)
+# want to know  posterior prediction for each case in the table
+dat <- data.frame(weight = c(45, 40, 65, 31, 53))
+h_sim <- sim(linmod, data = dat) #use sim instead of link to include the sigma parameter in the joint marginal posterior calls for each weight
+EH <- apply(h_sim,2,mean) #calculate mean for each column of h_sim
+h_ci <- apply(h_sim,2,PI) #calculate 89% PI for each columns
+dat$EH <- EH
+dat$L89 <- h_ci[1,]
+dat$h89 <- h_ci[2,]
+dat
+
+
+#### number 2 ####
+d <- Howell1
+d$logweight <- log(d$weight)
+xbar <- mean(d$logweight)
+
+logmod <- quap(
+  alist(
+      height ~ dnorm( mu , sigma ) ,
+      mu <- a + b1*(logweight - xbar) ,
+      a ~ dnorm( 178 , 20 ) ,
+      b1 ~ dlnorm( 0 , 1 ) ,
+      sigma ~ dunif( 0 , 50 )
+    ), data = d
+)
+precis(logmod)
+
+xvec <- log(1:60)
+mu <- sim(logmod, data = list(logweight=xvec))
+mu_mean <- apply(mu,2,mean)
+mu_ci <- apply(mu,2,PI,0.99)
+plot(d$height, d$weight)
+lines(exp(xvec),mu_mean)
+shade(mu_ci, exp(xvec))
+```

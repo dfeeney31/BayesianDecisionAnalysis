@@ -1,0 +1,47 @@
+---
+title: "Chp5"
+author: "Dan Feeney"
+date: "4/16/2020"
+output: html_document
+---
+
+#Chp 5 statistical rethinking notes
+## Spurrious associations
+```{r echo = TRUE}
+library(rethinking)
+rm(list=ls())
+data("WaffleDivorce")
+d <- WaffleDivorce
+# Standardize vars.Scale centers are 0 and makes SD 1
+d$A <- scale(d$MedianAgeMarriage)
+d$D <- scale(d$Divorce)
+#Since outcome and predictor are standardized to 0, alpha should be near 0
+#linear model D ~ normal(ui, sigma), ui <- a _ betaA*Ai, sigma is from an exponential prior
+m5.1 <- quap(
+    alist(
+      D ~ dnorm( mu , sigma ) ,
+      mu <- a + bA * A ,
+      a ~ dnorm( 0 , 0.2 ) ,
+      bA ~ dnorm( 0 , 0.5 ) ,
+      sigma ~ dexp( 1 )
+) , data = d )
+
+#Simulate from prior with extract.prior and link
+prior <- extract.prior(m5.1)
+mu <- link( m5.1 , post=prior , data=list( A=c(-2,2) ) ) #provides 
+plot( NULL , xlim=c(-2,2) , ylim=c(-2,2) )
+for ( i in 1:50 ) lines( c(-2,2) , mu[i,] , col=col.alpha("black",0.4) )
+```
+
+```{r echo = TRUE}
+# compute percentile interval of mean 
+A_seq <- seq( from=-3 , to=3.2 , length.out=30 ) #make a list of values from -3 to 3.2 
+mu <- link( m5.1 , data=list(A=A_seq) ) #link to that list and the model to map the parameters
+mu.mean <- apply( mu , 2, mean ) #calcualte the mean over columns 
+mu.PI <- apply( mu , 2 , PI ) #calculate the PI over columns 
+# plot it all
+plot( D ~ A , data=d , col=rangi2 )
+lines( A_seq , mu.mean , lwd=2 )
+shade( mu.PI , A_seq )
+
+```
