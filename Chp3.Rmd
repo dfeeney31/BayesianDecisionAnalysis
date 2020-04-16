@@ -24,7 +24,7 @@ dens(samples)
 ## the following answers questions based on the posterior generated above.
 ### based on 6 water landings in 9 tosses, this is the posterior distribution and the code below
 ### shows how you would calcualte the % of the posterior laying above or below some threshold, which
-### is an estimate of the true proportion of the world covered in water. 
+### is an estimate of the true proportion of the world covered in water. `
 ```{r echo = TRUE}
 # add up posterior probability where p < 0.5 
 sum( posterior[ p_grid < 0.5 ] )
@@ -38,3 +38,24 @@ quantile(samples, 0.8)
 quantile(samples, c(0.1,0.9))
 ```
 
+### if you had to give a point estimate of the posterior. The maximum a posteriori estiamte (MAP) is 0.66
+## for the example where we observed 6/9 'water' landings
+```{r echo = TRUE}
+p_grid[which.max(posterior)]
+chainmode( samples , adj=0.01 )
+
+
+sum( posterior*abs( 0.5 - p_grid ) )
+loss <- sapply( p_grid , function(d) sum( posterior*abs( d - p_grid ) ) )
+# loss contains a value for each possible decision of point estiamte to use based on a loss function
+p_grid[ which.min(loss) ]
+```
+
+## Given two tosses and a probability of 0.7, what are the relative probs of observing 0, 1, or 2 water
+```{r echo = TRUE}
+rbinom( 1 , size=2 , prob=0.7 )
+plot(rbinom( 10 , size=2 , prob=0.7 ))
+#Generate 10000 to verify how often each value of (0,1,2) appear in proportion to its liklihood
+dummy_w <- rbinom( 1e5 , size=2 , prob=0.7 )
+table(dummy_w)/1e5
+```

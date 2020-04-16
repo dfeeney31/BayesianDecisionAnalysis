@@ -1,0 +1,258 @@
+---
+title: "Chp4"
+author: "Dan Feeney"
+date: "4/15/2020"
+output: html_document
+---
+
+## Chapter 4 notes
+## Textbook notes
+
+```{r echo = TRUE}
+library(rethinking)
+rm(list=ls())
+pos <- replicate(1000, sum(runif(16,-1,1))) #1000 replicates of the sum 0f 16 random draws from -1 to 1
+plot(density(pos))
+
+log.big <- replicate( 10000 , log(prod(1 + runif(12,0,0.5))) )
+plot(density(log.big))
+```
+## General modeling notes: 1) We have things we want to understand. observable things = data, unobservable things like rates are parameters
+### we will define variables in terms of other variables or a distribution. The combo of variables and prob distributions define a joint generative model
+### First line (e.g. W ~ Binomial(N,p); p ~ uniform(0,1) defines liklihood function used in Bayes theorem and others define priors. We map variables or parameters onto distributions, meaning they are probabilistic (some values are more plausible than others).
+
+# reminder W ~ Binomial(N,p) W is distributed as a binomial dist with n trials and p prob of success.
+## p ~ uniform(0,1) where the prob of success is uniform over the region [0,1] or a noninformative prior. Hi ~N(Mu,Sigma)
+```{r echo = TRUE}
+data("Howell1")
+d <- Howell1
+precis(d)
+d2 <- subset(d, d$age > 18)
+
+#Take a look at some priors for height
+curve( dnorm( x , 178 , 20 ) , from=100 , to=250 ) #height prior
+curve( dunif( x , 0 , 50 ) , from=-10 , to=60 ) #SD of height (sigma) prior. This is a flat prior but stays positive between 0 and 50
+```
+
+### The prior distributions of height and sigma allow for prior predictive simulation, these imply a joint prior distribution of heights
+### hi ~ Normal(mean, sigma). H is normally distributed with mean and standard deviation sigma
+### mu ~ Normal(178, 20) (dnorm(178,20))
+### sigma ~ Uniform(0,50) (dunif(0,50))
+
+# Prior predictive distribution. We use this to build good priors before building the model and explore the joint prior distribution
+```{r echo = TRUE}
+sample_mu <- rnorm(1e4, 178,20)
+sample_sigma <- runif(1e4, 0, 50)
+prior_h <- rnorm(1e4, sample_mu, sample_sigma)
+dens(prior_h)
+```
+
+## Likely not the best prior because there are some unreasonably tall people in the prior. But at least there are possible values
+### really bad prior may have negative people like below. This prior includes a very large SD, which is common in Bayesian methods
+### but is not a great idea since it has 4% below to have neg height
+```{r echo = TRUE}
+sample_mu2 <- rnorm(1e4, 178,100)
+sample_sigma2 <- runif(1e4, 0, 50)
+prior_h2 <- rnorm(1e4, sample_mu2, sample_sigma2)
+dens(prior_h2)
+#length(prior_h2[prior_h2 < 0])/ length(prior_h2)
+```
+## Use grid approximation to calculate the posterior 
+```{r echo = TRUE}
+mu.list <- seq( from=150, to=160 , length.out=100 ) 
+sigma.list <- seq( from=7 , to=9 , length.out=100 )
+post <- expand.grid( mu=mu.list , sigma=sigma.list )
+post$LL <- sapply( 1:nrow(post) , function(i) sum(
+  dnorm( d2$height , post$mu[i] , post$sigma[i] , log=TRUE ) ) )
+post$prod <- post$LL + dnorm( post$mu , 178 , 20 , TRUE ) +
+dunif( post$sigma , 0 , 50 , TRUE )
+post$prob <- exp( post$prod - max(post$prod) )
+contour_xyz( post$mu , post$sigma , post$prob )
+image_xyz( post$mu , post$sigma , post$prob )
+```
+## now we want to randomly sample rows (since there are multiple parameters) in proportion to probability in post$prob.
+## you get 1e4 samples w/ replacement from posterior with height data 
+```{r echo = TRUE}
+sample.rows <- sample( 1:nrow(post) , size=1e4 , replace=TRUE ,
+prob=post$prob )
+sample.mu <- post$mu[ sample.rows ]
+sample.sigma <- post$sigma[ sample.rows ]
+plot( sample.mu , sample.sigma , cex=0.5 , pch=16 , col=col.alpha(rangi2,0.1) )
+# describe shape of the marginal posterior (both mu and sigma), marginal meaning avraging over other parameters
+dens(sample.mu)
+dens(sample.sigma)
+PI(sample.mu)
+PI(sample.sigma)
+```
+
+
+## Using quap. Give priors to each parameter. using quadratic approx, the posterior's peak is at maximum a posteriori estimate (MAP)
+```{r echo = TRUE}
+flist <- alist(
+  height ~ dnorm(mu, sigma),
+  mu ~ dnorm(178,20),
+  sigma ~ dunif(0,50)
+)
+
+m4.1 <- quap(flist, data = d2)
+precis(m4.1)
+
+# you can specify a starting value for quap like below. Just to initialize what combo of parameters the algorithm begins iwth
+start <- list(
+mu=mean(d2$height),
+sigma=sd(d2$height)
+)
+m4.1 <- quap( flist , data=d2 , start=start )
+precis(m4.1)
+```
+## Changing the prior to being very narrow (sd of 0.1). In this case, the estimate for mu has barely moved off the prior. Sigma also
+## changes because you specify the mean must be near 178, so it adjusts sigma accordingly
+```{r echo = TRUE}
+m4.2 <- quap(
+  flist <- alist(
+    height ~ dnorm(mu, sigma),
+    mu ~ dnorm(178,0.1),
+    sigma ~ dunif(0, 50)
+  ), data = d2
+)
+precis(m4.2)
+```
+## Sampling from Quap: quadratic approx of a posterior distribution with > 1 parameter (mu and sigma) is a multidimensional Gaussian distribution. So, R calcualtes SD for all params and a covariance matrix among pairs of params. Just like mean ans sd describe a 1-D Gaussian, means and a matrix of variances and covariances describe a multidimensional Gaussian.
+## vcov returns the variance-covariance matrix. This tells us about relations between parameters & may be decomposed into a vector of variances for parameters and correlation matrix between parameters. Diag will return the variances (sd^2) and cov2cor the correlation matrix
+```{r echo = TRUE}
+vcov(m4.1)
+
+diag( vcov( m4.1 ) ) 
+cov2cor( vcov( m4.1 ) )
+```
+## now we want to sample from the multidimensional Gaussian posterior, so we sample vectors and maintain the covariance between mu and sigma
+``` {r echo = TRUE}
+post <- extract.samples(m4.1, n = 1e4)
+head(post)
+precis(post)
+```
+
+# Now, consider the regression between height and weight
+## Use a linear model of height with an additive effect of weight. A parameter (beta) will tell us this relation. For each combo of parameter values (height, beta, etc.), we compute the posterior probability of the plausibility of that combo, given the data. 
+
+### now h and MU have indices so MU is defined differently for each person
+### hi ~ Normal(MUi, sigma)
+### MUi = alpha + beta(xi - xbar)(deterministic with = rather than ~ probabilistic). beta ~ normal(0,10) is the beta prior. alpha ~ Uniform(0,50).
+## This asks the model two questoins, what is height when xi = xbar (or what is alpha) and what is the expected change in height when x moves one unit from xbar (beta)? 
+
+### in the first case with the prior for beta centered on 0, the priors are terrible and give a bunch of unrealistic values (heights below 0)
+```{r echo = TRUE}
+plot(d2$height, d2$weight)
+#Simulate 100 lines based on the prior for alpha and beta
+N <- 100
+a <- rnorm(N, 178, 20)
+b <- rnorm(N, 0, 10)
+
+plot( NULL , xlim=range(d2$weight) , ylim=c(-100,400) ,
+xlab="weight" , ylab="height" )
+abline( h=0 , lty=2 )
+abline( h=272 , lty=1 , lwd=0.5 )
+mtext( "b ~ dnorm(0,10)" )
+xbar <- mean(d2$weight)
+for ( i in 1:N ) curve( a[i] + b[i]*(x - xbar) ,
+from=min(d2$weight) , to=max(d2$weight) , add=TRUE ,
+col=col.alpha("black",0.2) )
+```
+
+## Instead of a beta centered on 0, use the log-normal distribution- rlnorm in R- to ensure positive slopes
+```{r echo = TRUE}
+## another idea is to use a log-normal for beta, which is encouraged so slopes are all positive
+b <- rlnorm(1e4, 0, 1)
+dens(b)
+plot( NULL , xlim=range(d2$weight) , ylim=c(-100,400) ,
+xlab="weight" , ylab="height" )
+abline( h=0 , lty=2 )
+abline( h=272 , lty=1 , lwd=0.5 )
+mtext( "b ~ dnorm(0,10)" )
+xbar <- mean(d2$weight)
+for ( i in 1:N ) curve( a[i] + b[i]*(x - xbar) ,
+from=min(d2$weight) , to=max(d2$weight) , add=TRUE ,
+col=col.alpha("black",0.2) )
+```
+
+## Now, to construct the posterior distribution of parameters using Quap
+``` {r echo = TRUE}
+#optional, define average weight
+xbar <- mean(d2$weight)
+
+lin.mod <- quap(
+  flist <- alist(
+    height ~ dnorm(mu, sigma), #general formula we expect, height depends on an unknown mu and sigma
+    mu <- a + b*(weight- xbar), #define the linear model alpha * beta(diff_in_weight)
+    a ~ dnorm(178,20), #the alpha (intercept) prior from a normal distribution with mean 178, sigma 20
+    b ~ dlnorm(0,1), #beta is from a log-normal distribution between 0 and 1
+    sigma ~ dunif(0,50) #uniform distribution (flat prior) for sigma
+  ), data = d2
+)
+```
+### This could also have been fit by encoding b as log_b ~ dnorm(0,1) and then beta = exp(log(beta)) or beta <- exp(log(beta))
+### plotting simulations and making tables of the posterior. mean of 0.9 for param b means for 1kg heaver than mean, person is 0.9 cm taller and 89% of posterior density lives between 0.84 and 0.97. 
+```{r echo = TRUE}
+precis(lin.mod)
+round(vcov(lin.mod),3)
+pairs(lin.mod) #plots the marginal posteriors and covariances. Little covariance btwn params -> centering
+```
+
+## plotting simulations. We use the max a posteriori estimate (MAP) of alpha and beta from the posterior to plot the regression line. This is just one of infinitely many lines from the posterior. 
+```{r echo = TRUE}
+plot( height ~ weight , data=d2 , col=rangi2 ) #plot raw data
+post <- extract.samples(lin.mod) #get samples of posterior
+a_map <- mean(post$a) #maximum a posteriori estimate
+b_map <- mean(post$b) #MAP
+curve( a_map + b_map*(x - xbar) , add=TRUE ) #take MAPs for a and b and make a curve based on them
+
+## 
+post <- extract.samples(lin.mod)
+head(post)
+# each row is a correlated random sample from the joint posterior of all three parameters using covariances from vcov(lin.mod)
+# The mean of these is what we plotted above and the spread gives an indication of uncertainty
+```
+## Estimate from only the first n cases and estimate the model and plot 20 lines from the joint posterior. As n grows, the lines are more compact
+```{r echo = TRUE}
+N <- 30
+dN <- d2[ 1:N , ]
+mN <- quap(
+alist(
+height ~ dnorm( mu , sigma ) ,
+mu <- a + b*( weight - mean(weight) ) ,
+a ~ dnorm( 178 , 20 ) ,
+b ~ dlnorm( 0 , 1 ) ,
+sigma ~ dunif( 0 , 50 )
+) , data=dN )
+
+# extract 20 samples from the posterior 4.49
+post <- extract.samples( mN , n=20 )
+# display raw data and sample size
+plot( dN$weight , dN$height ,
+xlim=range(d2$weight) , ylim=range(d2$height) ,
+col=rangi2 , xlab="weight" , ylab="height" )
+mtext(concat("N = ",N))
+# plot the lines, with transparency
+for ( i in 1:20 )
+curve( post$a[i] + post$b[i]*(x-mean(dN$weight)) ,
+col=col.alpha("black",0.3) , add=TRUE )
+```
+
+## we can use the link function to sample from the joint marginal posterior of parameters, and compute mu for each set of params
+``` {r echo = TRUE}
+# define sequence of weights to compute predictions for
+# these values will be on the horizontal axis
+weight.seq <- seq( from=25 , to=70 , by=1 )
+# use link to compute mu
+# for each sample from posterior
+# and for each weight in weight.seq
+mu <- link(lin.mod , data=data.frame(weight=weight.seq) )
+str(mu)
+
+# use type="n" to hide raw data
+plot( height ~ weight , d2 , type="n" )
+# loop over samples and plot each mu value
+for ( i in 1:100 )
+points( weight.seq , mu[i,] , pch=16 , col=col.alpha(rangi2,0.1) )
+# plots distribution of mu for each weight between 25 and 70. 
+```
