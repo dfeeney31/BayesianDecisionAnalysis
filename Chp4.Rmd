@@ -11,11 +11,13 @@ output: html_document
 ```{r echo = TRUE}
 library(rethinking)
 rm(list=ls())
+
 pos <- replicate(1000, sum(runif(16,-1,1))) #1000 replicates of the sum 0f 16 random draws from -1 to 1
 plot(density(pos))
 
 log.big <- replicate( 10000 , log(prod(1 + runif(12,0,0.5))) )
 plot(density(log.big))
+
 ```
 ## General modeling notes: 1) We have things we want to understand. observable things = data, unobservable things like rates are parameters
 ### we will define variables in terms of other variables or a distribution. The combo of variables and prob distributions define a joint generative model
@@ -40,10 +42,11 @@ curve( dunif( x , 0 , 50 ) , from=-10 , to=60 ) #SD of height (sigma) prior. Thi
 ### sigma ~ Uniform(0,50) (dunif(0,50))
 
 # Prior predictive distribution. We use this to build good priors before building the model and explore the joint prior distribution
+### sample from the prior to see the predictions of heights relative combo of parameters provide.
 ```{r echo = TRUE}
 sample_mu <- rnorm(1e4, 178,20)
 sample_sigma <- runif(1e4, 0, 50)
-prior_h <- rnorm(1e4, sample_mu, sample_sigma)
+prior_h <- rnorm(1e4, sample_mu, sample_sigma) #random uniform distributed numbers with mean mu and sd sigma
 dens(prior_h)
 ```
 
@@ -59,22 +62,22 @@ dens(prior_h2)
 ```
 ## Use grid approximation to calculate the posterior 
 ```{r echo = TRUE}
-mu.list <- seq( from=150, to=160 , length.out=100 ) 
-sigma.list <- seq( from=7 , to=9 , length.out=100 )
-post <- expand.grid( mu=mu.list , sigma=sigma.list )
-post$LL <- sapply( 1:nrow(post) , function(i) sum(
+mu.list <- seq( from=150, to=160 , length.out=100 ) # simply space values from 150 to 160 evenly for 100 values
+sigma.list <- seq( from=7 , to=9 , length.out=100 ) #Same for sigma but from 7 to 9
+post <- expand.grid( mu=mu.list , sigma=sigma.list ) #Created a dataframe for the combination of variables (height and sd)
+post$LL <- sapply( 1:nrow(post) , function(i) sum(  # sapply returns a vector where we sum the dnorm of height with values of mean and sigma
   dnorm( d2$height , post$mu[i] , post$sigma[i] , log=TRUE ) ) )
 post$prod <- post$LL + dnorm( post$mu , 178 , 20 , TRUE ) +
-dunif( post$sigma , 0 , 50 , TRUE )
+  dunif( post$sigma , 0 , 50 , TRUE )
 post$prob <- exp( post$prod - max(post$prod) )
 contour_xyz( post$mu , post$sigma , post$prob )
 image_xyz( post$mu , post$sigma , post$prob )
 ```
 ## now we want to randomly sample rows (since there are multiple parameters) in proportion to probability in post$prob.
-## you get 1e4 samples w/ replacement from posterior with height data 
+## you get 1e4 samples w/ replacement from posterior with height data. Sample row numbers in proportion to posterior probability 
 ```{r echo = TRUE}
 sample.rows <- sample( 1:nrow(post) , size=1e4 , replace=TRUE ,
-prob=post$prob )
+prob=post$prob ) #grabs rows (num rows to choose from), size, and with replacement. Sample with probability 
 sample.mu <- post$mu[ sample.rows ]
 sample.sigma <- post$sigma[ sample.rows ]
 plot( sample.mu , sample.sigma , cex=0.5 , pch=16 , col=col.alpha(rangi2,0.1) )
@@ -86,7 +89,8 @@ PI(sample.sigma)
 ```
 
 
-## Using quap. Give priors to each parameter. using quadratic approx, the posterior's peak is at maximum a posteriori estimate (MAP)
+## Using quap. Give priors to each parameter. using quadratic approx, the posterior's peak is at maximum a posteriori estimate (MAP).
+## quap will return the marginal distribution for each parameter. This is the plausibility for each value of each parameter (e.g. mu), after averaging over the plausibilities of the other parameter (e.g. sigma in this case)
 ```{r echo = TRUE}
 flist <- alist(
   height ~ dnorm(mu, sigma),
@@ -97,7 +101,7 @@ flist <- alist(
 m4.1 <- quap(flist, data = d2)
 precis(m4.1)
 
-# you can specify a starting value for quap like below. Just to initialize what combo of parameters the algorithm begins iwth
+# you can initialize quap like below. Just to initialize what combo of parameters the algorithm begins with
 start <- list(
 mu=mean(d2$height),
 sigma=sd(d2$height)
