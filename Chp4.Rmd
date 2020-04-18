@@ -130,6 +130,8 @@ diag( vcov( m4.1 ) )
 cov2cor( vcov( m4.1 ) )
 ```
 ## now we want to sample from the multidimensional Gaussian posterior, so we sample vectors and maintain the covariance between mu and sigma
+## instead of sampling single values, we are sampling vectors of values (mean and sigma in this case).
+### This is the key to prob modeling. Construct a prior, calcualte posterior, sample from posterior, update prior
 ``` {r echo = TRUE}
 post <- extract.samples(m4.1, n = 1e4)
 head(post)
@@ -144,9 +146,9 @@ precis(post)
 ### MUi = alpha + beta(xi - xbar)(deterministic with = rather than ~ probabilistic). beta ~ normal(0,10) is the beta prior. alpha ~ Uniform(0,50).
 ## This asks the model two questoins, what is height when xi = xbar (or what is alpha) and what is the expected change in height when x moves one unit from xbar (beta)? 
 
-### in the first case with the prior for beta centered on 0, the priors are terrible and give a bunch of unrealistic values (heights below 0)
+### in the first case with the prior for beta centered on 0, the priors are terrible and give a bunch of unrealistic values (heights below 0). We know this from simulating from the prior
 ```{r echo = TRUE}
-plot(d2$height, d2$weight)
+#plot(d2$height, d2$weight)
 #Simulate 100 lines based on the prior for alpha and beta
 N <- 100
 a <- rnorm(N, 178, 20)
@@ -163,10 +165,11 @@ from=min(d2$weight) , to=max(d2$weight) , add=TRUE ,
 col=col.alpha("black",0.2) )
 ```
 
-## Instead of a beta centered on 0, use the log-normal distribution- rlnorm in R- to ensure positive slopes
+## Instead of a beta (slope) centered on 0, use the log-normal distribution- rlnorm in R- to ensure positive slopes
 ```{r echo = TRUE}
 ## another idea is to use a log-normal for beta, which is encouraged so slopes are all positive
-b <- rlnorm(1e4, 0, 1)
+b <- rlnorm(1e4, 0, 1) #random log normal from 0,1 (essentially 0 to ~10)
+# a is carried from before and b is constructed here. below, we sample from a and b in the for loop to construct N lines
 dens(b)
 plot( NULL , xlim=range(d2$weight) , ylim=c(-100,400) ,
 xlab="weight" , ylab="height" )
@@ -179,7 +182,7 @@ from=min(d2$weight) , to=max(d2$weight) , add=TRUE ,
 col=col.alpha("black",0.2) )
 ```
 
-## Now, to construct the posterior distribution of parameters using Quap
+## Now, to construct the posterior distribution of parameters using Quap and use the prior lognormal(0,1) for the slope (beta)
 ``` {r echo = TRUE}
 #optional, define average weight
 xbar <- mean(d2$weight)
@@ -201,17 +204,16 @@ precis(lin.mod)
 round(vcov(lin.mod),3)
 pairs(lin.mod) #plots the marginal posteriors and covariances. Little covariance btwn params -> centering
 ```
-
+## we see the estimate of the average height (alpha) is 154 with a 90% interval of 154.2 to 155.1, slope 0.9 with interval 0.84 to 0.97 and sigma 5.11 between 4.8 and 5.42
 ## plotting simulations. We use the max a posteriori estimate (MAP) of alpha and beta from the posterior to plot the regression line. This is just one of infinitely many lines from the posterior. 
 ```{r echo = TRUE}
 plot( height ~ weight , data=d2 , col=rangi2 ) #plot raw data
-post <- extract.samples(lin.mod) #get samples of posterior
+post <- extract.samples(lin.mod) #get samples of posterior IN PROPORTION TO THEIR PLAUSIBILITY
 a_map <- mean(post$a) #maximum a posteriori estimate
 b_map <- mean(post$b) #MAP
 curve( a_map + b_map*(x - xbar) , add=TRUE ) #take MAPs for a and b and make a curve based on them
 
 ## 
-post <- extract.samples(lin.mod)
 head(post)
 # each row is a correlated random sample from the joint posterior of all three parameters using covariances from vcov(lin.mod)
 # The mean of these is what we plotted above and the spread gives an indication of uncertainty
@@ -229,7 +231,7 @@ mN <- quap(
       sigma ~ dunif( 0 , 50 )
     ) , data=dN )
 
-# extract 20 samples from the posterior 4.49
+# extract 20 samples from the posterior
 post <- extract.samples( mN , n=20 )
 # display raw data and sample size
 plot( dN$weight , dN$height ,
@@ -242,7 +244,17 @@ curve( post$a[i] + post$b[i]*(x-mean(dN$weight)) ,
 col=col.alpha("black",0.3) , add=TRUE )
 ```
 
-## we can use the link function to sample from the joint marginal posterior of parameters, and compute mu for each set of params
+```{r echo = TRUE}
+#extract samples and compare for a mean of 50 kg
+post <- extract.samples(lin.mod)
+mu_at_50 <- post$a + post$b*(50 - xbar) #putting in 50 minus x bar plus plausible params for a and b give the dist for height around someone 50 kg
+dens(mu_at_50)
+
+# now this must be done for every weight value, not just 50. 
+```
+
+## we can use the link function to sample from the joint marginal posterior of parameters, and compute mu for each set of params.
+## link samples from the posterior distribution for each case in the data
 ``` {r echo = TRUE}
 # define sequence of weights to compute predictions for
 # these values will be on the horizontal axis
@@ -252,7 +264,8 @@ weight.seq <- seq( from=25 , to=70 , by=1 )
 # and for each weight in weight.seq
 mu <- link(lin.mod , data=data.frame(weight=weight.seq) )
 str(mu)
-
+#link returns a matrix. Rows are samples from posterior distribution and columns are cases (rows) in the data
+apply(mu, 2, mean) #gives the mean of each column (2) so you have the mean height for each case (in this case the values from 25 to 70)
 # use type="n" to hide raw data
 plot( height ~ weight , d2 , type="n" )
 # loop over samples and plot each mu value
@@ -272,7 +285,7 @@ lines( weight.seq , mu.mean )
 # plot a shaded region for 89%
 shade( mu.PI , weight.seq, add = TRUE )
 ```
-
+## Link by default uses the original data, so you must pass it new horizontal axis values for which to plot the posterior prediction
 ## the below code replicates what the function link does 
 ## general overview: 1) use link to generate posterior distributions for mu, pass it new horizontal axis values for you to plot the posterior prediction against. 2) use mean or PI to find summary of mu for each value of the predictor, 3) use lines and shade to plot 
 ```{r echo = TRUE}
@@ -286,11 +299,13 @@ mu.CI <- apply( mu , 2 , PI , prob=0.89 )
 ```
 
 ## to get prediction intervals across all heights (not just the mean), the sigma needs to be incorporated
-### sample from Gaussian distribution with mean mu and sigma samples 
+### sample from Gaussian distribution with mean mu and sigma samples. The line is distributed around mu, goverened by sigma
+## Sim will do this by simulating heights. This does not just simulate plausible heights like link, but includes sigma
 ```{r echo = TRUE}
 sim.height <- sim(lin.mod , data=list(weight=weight.seq) ) #simulates heights, not distributions of plausible average heights
 str(sim.height)
 height.PI <- apply( sim.height , 2 , PI , prob=0.89 ) #summarize these heights (get the PI for the)
+mu.HPDI <- apply(sim.height, 2, HPDI, prob = 0.89) #highest desntiy posterior interval containing 89% of density
 
 #plotting
 # plot raw data 
@@ -299,6 +314,7 @@ lines( weight.seq , mu.mean ) # draw MAP line
 shade( mu.HPDI , weight.seq )# draw HPDI region for line
 # draw PI region for simulated heights
 shade( height.PI , weight.seq )
+#This shading may be smoothed out by sampling more values from the posterior in sim
 ```
 
 
@@ -327,7 +343,7 @@ precis(polymod)
 ``` {R echo = TRUE}
 weight.seq <- seq( from=-2.2 , to=2 , length.out=30 ) #SEt grid of length 30 for the Z scores of weight from standardization above
 pred_dat <- list( weight_s=weight.seq , weight_s2=weight.seq^2 )
-mu <- link( polymod , data=pred_dat ) #generate posterior distributions for the range of weights defined above
+mu <- link( polymod , data=pred_dat ) #generate posterior distributions for the range of weights defined above not using random sigma yet
 mu.mean <- apply( mu , 2 , mean )
 mu.PI <- apply( mu , 2 , PI , prob=0.89 )
 sim.height <- sim( polymod , data=pred_dat )
@@ -346,6 +362,39 @@ axis( side=1 , at=at , labels=round(labels,1) )
 lines( weight.seq , mu.mean )
 shade( mu.PI , weight.seq )
 shade( height.PI , weight.seq )
+```
+
+```{r echo = TRUE}
+#fit a cubic term
+d$weight_s3 <- d$weight^3
+cubmod <- quap(
+    alist(
+      height ~ dnorm( mu , sigma ) ,
+      mu <- a + b1*weight_s + b2*weight_s2 + b3*weight_s3 ,
+      a ~ dnorm( 178 , 20 ) ,
+      b1 ~ dlnorm( 0 , 1 ) ,
+      b2 ~ dnorm( 0 , 10 ) ,
+      b3 ~ dnorm( 0 , 10 ) ,
+      sigma ~ dunif( 0 , 50 )
+  ), data = d
+)
+
+
+precis(cubmod)
+
+weight.seq <- seq( from=-2.2 , to=2 , length.out=30 ) #SEt grid of length 30 for the Z scores of weight from standardization above
+pred_dat <- list( weight_s=weight.seq , weight_s2=weight.seq^2, weight_s3=weight.seq^3 )
+mu <- link( cubmod , data=pred_dat ) #generate posterior distributions for the range of weights defined above not using random sigma yet
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( cubmod , data=pred_dat )
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+
+plot( height ~ weight_s , d , col=col.alpha(rangi2,0.5) ) 
+lines( weight.seq , mu.mean )
+shade( mu.PI , weight.seq )
+shade( height.PI , weight.seq )
+
 ```
 
 ## Splines
@@ -371,6 +420,26 @@ degree=3 , intercept=TRUE )
 
 plot( NULL , xlim=range(d2$year) , ylim=c(0,1) , xlab="year" , ylab="basis value")
 for ( i in 1:ncol(B) ) lines( d2$year , B[,i] )
+```
+
+```{r echo = TRUE}
+m4.7 <- quap(
+    alist(
+      T ~ dnorm( mu , sigma ) ,
+      mu <- a + B %*% w ,
+      a ~ dnorm(6,10),
+      w ~ dnorm(0,1),
+      sigma ~ dexp(1)
+    ),
+  data=list( T=d2$temp , B=B ) ,
+  start=list( w=rep( 0 , ncol(B) ) ) )
+
+
+post <- extract.samples(m4.7)
+w <- apply( post$w , 2 , mean )
+plot( NULL , xlim=range(d2$year) , ylim=c(-2,2) ,
+xlab="year" , ylab="basis * weight" )
+for ( i in 1:ncol(B) ) lines( d2$year , w[i]*B[,i] )
 ```
 ## example questions, say height is better assoc with log(weight). Fit quap with this 
 ```{r echo = TRUE}
@@ -439,4 +508,36 @@ mu_ci <- apply(mu,2,PI,0.99)
 plot(d$height, d$weight)
 lines(exp(xvec),mu_mean)
 shade(mu_ci, exp(xvec))
+```
+
+```{r echo = TRUE}
+d <- Howell1
+d <- subset(d, d$age < 18)
+
+#optional, define average weight
+xbar <- mean(d$weight)
+
+lin.mod <- quap(
+  flist <- alist(
+    height ~ dnorm(mu, sigma), #general formula we expect, height depends on an unknown mu and sigma
+    mu <- a + b*(weight- xbar), #define the linear model alpha * beta(diff_in_weight)
+    a ~ dnorm(178,20), #the alpha (intercept) prior from a normal distribution with mean 178, sigma 20
+    b ~ dlnorm(0,1), #beta is from a log-normal distribution between 0 and 1
+    sigma ~ dunif(0,50) #uniform distribution (flat prior) for sigma
+  ), data = d
+)
+precis(lin.mod)
+
+weight.seq <- seq( from=4 , to=40 , by=1 )
+# use sim to simulate draws from posterior
+mu <- sim(lin.mod , data=data.frame(weight=weight.seq) )
+# summarize the distribution of mu
+mu.mean <- apply( mu , 2 , mean ) #compute mean of each columns (2) of mu
+mu.PI <- apply( mu , 2 , PI , prob=0.89 ) #cmopute 89% PI at each value
+
+plot( height ~ weight , data=d , col=col.alpha(rangi2,0.5) )
+# plot the MAP line, aka the mean mu for each weight
+lines( weight.seq , mu.mean )
+# plot a shaded region for 89%
+shade( mu.PI , weight.seq, add = TRUE )
 ```
