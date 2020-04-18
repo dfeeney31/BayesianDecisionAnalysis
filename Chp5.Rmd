@@ -7,6 +7,7 @@ output: html_document
 
 #Chp 5 statistical rethinking notes
 ## Spurrious associations
+### Multiple regression attempts to 'hold constant' the cofounding variables. Multiple causation explores more of the relation between variables including interactions. The importance of one variable may depend on another
 ```{r echo = TRUE}
 library(rethinking)
 rm(list=ls())
@@ -15,6 +16,8 @@ d <- WaffleDivorce
 # Standardize vars.Scale centers are 0 and makes SD 1
 d$A <- scale(d$MedianAgeMarriage)
 d$D <- scale(d$Divorce)
+
+sd(d$MedianAgeMarriage) #Think about the prior distributions. A beta of 1 would mean a change of 1 SD for age of marriage is a 1 SD change in divorce rate. Since 1 SD of median marriage age is 1.2, this means every 1.2 years would be associated with a 1 SD rate of divorce, which is huge!
 #Since outcome and predictor are standardized to 0, alpha should be near 0
 #linear model D ~ normal(ui, sigma), ui <- a _ betaA*Ai, sigma is from an exponential prior
 m5.1 <- quap(
@@ -27,12 +30,15 @@ m5.1 <- quap(
 ) , data = d )
 
 #Simulate from prior with extract.prior and link
-prior <- extract.prior(m5.1)
+set.seed(100)
+prior <- extract.prior(m5.1) #sample from the prior and link to plot over the interval [-2,2] (Standard deviation)
 mu <- link( m5.1 , post=prior , data=list( A=c(-2,2) ) ) #provides 
 plot( NULL , xlim=c(-2,2) , ylim=c(-2,2) )
 for ( i in 1:50 ) lines( c(-2,2) , mu[i,] , col=col.alpha("black",0.4) )
+#Changing the prior for beta to being more vague or flat results in ridiculous priors
 ```
 
+## now sample from the posterior with making a sequence of x variables, use link, calcualte mean and PI, and plot the results
 ```{r echo = TRUE}
 # compute percentile interval of mean 
 A_seq <- seq( from=-3 , to=3.2 , length.out=30 ) #make a list of values from -3 to 3.2 
@@ -43,5 +49,92 @@ mu.PI <- apply( mu , 2 , PI ) #calculate the PI over columns
 plot( D ~ A , data=d , col=rangi2 )
 lines( A_seq , mu.mean , lwd=2 )
 shade( mu.PI , A_seq )
+
+```
+## relation between divorce rate and marriage rate
+```{r echo = TRUE}
+d$M <- scale( d$Marriage ) #scale marriage rate
+m5.2 <- quap(
+    alist(
+      D ~ dnorm( mu , sigma ) ,
+      mu <- a + bM * M , #saving bM for beta for marriage
+      a ~ dnorm( 0 , 0.2 ) ,
+      bM ~ dnorm( 0 , 0.5 ) ,
+      sigma ~ dexp( 1 )
+    ) , data = d )
+precis(m5.2)
+#use A_seq from previous 
+A_seq <- seq(from = -3, to = 3.2, length.out = 30)
+mu <- link( m5.2 , data=list(A=A_seq) )
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu, 2, PI)
+
+plot(D ~ M, data = d, col=rangi2)
+lines(A_seq,mu.mean, lwd = 2)
+shade(mu.PI, A_seq)
+```
+## DAG (directed acyclic graph). Directed --> causal influence between variables, acyclic means causes do not eventually flow back on themselves, graph means it is nodes and edges (connections). 
+### to construct a DAG between age, marriage rate, and divorce rate, use daggity library. If Y is not associated with X after conditioning on Z, Y ⊥⊥ X|Z.
+### D⊥̸⊥ A,D⊥̸⊥ M, A⊥̸⊥ M means they are notindepndent of each other
+
+
+```{r echo = TRUE}
+library(dagitty)
+dag5.1 <- dagitty( "dag {
+A -> D
+A -> M
+M -> D
+}")
+coordinates(dag5.1) <- list( x=c(A=0,D=1,M=2) , y=c(A=0,D=1,M=0) )
+drawdag( dag5.1 )
+# or DAG two with no causation between marriage rate and divorce rate
+dag5.2 <- dagitty( "dag {
+A -> D
+A -> M
+}")
+coordinates(dag5.2) <- list( x=c(A=0,D=1,M=2) , y=c(A=0,D=1,M=0) )
+drawdag( dag5.2 )
+
+DMA_dag2 <- dagitty('dag{ D <- A -> M }')
+impliedConditionalIndependencies( DMA_dag2 ) #for the second DAG, these are the conditional independencies. This means all vars are correlated initially, but D and M should be independent after conditioning on A
+# DAG 1
+DMA_dag1 <- dagitty('dag{ D <- A -> M -> D }')
+impliedConditionalIndependencies( DMA_dag1 ) #no output because it implies all variables are independent 
+```
+
+## Multiple regression. Mu = alpha + BETAm*M + BETAa*A + sigma where BETAa is beta for age and BETAm beta for marriage rate
+### divorce rate can dependent on age of marriage or marriage rate with 'or' representing independent associations
+### M = Xb where m is a vector of predicted means (one for each row in data), b is column vector of parameters (one for each predictor), and X is a design matrix. It has as many rows as data and columns as predictors plus 1. X is a dataframe plus a first column filled with 1s, which are multiplied by the first parameter (alpha, or the intercept). When X is matrix multiplied by b, you get predicted means X%*% b in R notation
+### now let's approximate the posterior 
+
+```{r echo = TRUE}
+m5.3 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a * bM*M + bA*A,
+    a ~ dnorm(0,0.2),
+    bM ~ dnorm(0,0.5),
+    bA ~ dnorm(0,0.5),
+    sigma ~ dexp(1)
+  ), data = d
+)
+
+precis( m5.3 ) # mean estimate for bA is still negative and both sides of interval are negative. bM is near 0 with a wide interval
+plot( coeftab(m5.1,m5.2,m5.3), par=c("bA","bM") ) #Shows each parameter estimate from the three models (age only, marriage rate only, and both)
+#ONce we know the age of marriage for a state, there is little additonal knowledge to be gainted by knowing the marriage rate, indicating       D ⊥⊥ M|A. So the first DAG with causation between A/M and D is not plausible
+```
+
+## There is no additional gain in knowing marriage rate once you know age of marraige for a state. There is still value in knowing marriage rate if you cannot find the age of marriage for a state. There is no causal relation between marriage rate and divorce rate or it is spurrious (caused by the effect of age on both marriage and divorce rate)
+### plotting helps interprete the results of multiple regression. 1) predictor residual plots show outcome against predictor residuals, 2) posterior prediction plots model-based predictors against raw data (error in prediction), and 3) counterfactual plots show predicted for imaginary examples
+### predictor residual plots: 
+```{r echo = TRUE}
+m5.4 <- quap(
+    alist(
+      M ~ dnorm( mu , sigma ) ,
+      mu <- a + bAM * A ,
+      a ~ dnorm( 0 , 0.2 ) ,
+      bAM ~ dnorm( 0 , 0.5 ) ,
+      sigma ~ dexp( 1 )
+    ) , data = d )
 
 ```
