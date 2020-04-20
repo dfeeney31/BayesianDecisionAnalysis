@@ -126,7 +126,7 @@ plot( coeftab(m5.1,m5.2,m5.3), par=c("bA","bM") ) #Shows each parameter estimate
 
 ## There is no additional gain in knowing marriage rate once you know age of marraige for a state. There is still value in knowing marriage rate if you cannot find the age of marriage for a state. There is no causal relation between marriage rate and divorce rate or it is spurrious (caused by the effect of age on both marriage and divorce rate)
 ### plotting helps interprete the results of multiple regression. 1) predictor residual plots show outcome against predictor residuals, 2) posterior prediction plots model-based predictors against raw data (error in prediction), and 3) counterfactual plots show predicted for imaginary examples
-### predictor residual plots: 
+### predictor residual plots: M (marriage rate) and A (median age of marriage), to compute residuals, use the other predictor to model it, so for marriage rate (M) predict with A. Then we compute residuals by subtracting observed marriage rate in each state by the predicted one
 ```{r echo = TRUE}
 m5.4 <- quap(
     alist(
@@ -136,5 +136,133 @@ m5.4 <- quap(
       bAM ~ dnorm( 0 , 0.5 ) ,
       sigma ~ dexp( 1 )
     ) , data = d )
+mu <- link(m5.4)
+mu_mean <- apply( mu , 2 , mean )
+mu_resid <- d$M - mu_mean
 
+```
+
+``` {r echo = TRUE}
+# call link without specifying new data
+# so it uses original data to do a posterior predictive test
+mu <- link( m5.3 )
+# summarize samples across cases
+mu_mean <- apply( mu , 2 , mean )
+mu_PI <- apply( mu , 2 , PI )
+# simulate observations
+# again no new data, so uses original data
+D_sim <- sim( m5.3 , n=1e4 )
+D_PI <- apply( D_sim , 2 , PI )
+
+plot( mu_mean ~ d$D , col=rangi2 , ylim=range(mu_PI) ,
+xlab="Observed divorce" , ylab="Predicted divorce" )
+abline( a=0 , b=1 , lty=2 )
+for ( i in 1:nrow(d) ) lines( rep(d$D[i],2) , mu_PI[,i] , col=rangi2 )
+identify( x=d$D , y=mu_mean , labels=d$Loc )
+```
+
+##  counterfactual plots plot any combo of the predictors that you want and regress against them.
+### need to demonstrate how each variable influences each other (A -> M for example), so we fit bM*M and bA*A 
+### we will simulate values of M and D in that order to check the influence of A on M before estimating the joint influence on D
+``` {r echo = TRUE}
+data(WaffleDivorce)
+d <- list()
+d$A <- standardize( WaffleDivorce$MedianAgeMarriage )
+d$D <- standardize( WaffleDivorce$Divorce )
+d$M <- standardize( WaffleDivorce$Marriage )
+m5.3_A <- quap(
+    alist(
+## A -> D <- M
+      D ~ dnorm( mu , sigma ) ,
+      mu <- a + bM*M + bA*A ,
+      a ~ dnorm( 0 , 0.2 ) ,
+      bM ~ dnorm( 0 , 0.5 ) ,
+      bA ~ dnorm( 0 , 0.5 ) ,
+      sigma ~ dexp( 1 ),
+## A -> M
+      M ~ dnorm( mu_M , sigma_M ),
+      mu_M <- aM + bAM*A,
+      aM ~ dnorm( 0 , 0.2 ),
+      bAM ~ dnorm( 0 , 0.5 ),
+      sigma_M ~ dexp( 1 )
+  ) , data = d )
+
+precis(m5.3_A) #bAM is strongly negative, so we could interprete this as if we reduce A, we reduce M
+
+A_seq <- seq( from=-2 , to=2 , length.out=30 ) #Z scores [-2, 2]
+sim_dat <- data.frame( A=A_seq )
+s <- sim( m5.3_A , data=sim_dat , vars=c("M","D") )
+
+# display counterfactual predictions
+plot( sim_dat$A , colMeans(s$D) , ylim=c(-2,2) , type="l" ,
+xlab="manipulated A" , ylab="counterfactual D" )
+shade( apply(s$D,2,PI) , sim_dat$A )
+mtext( "Total counterfactual effect of A on D" )
+```
+
+
+## 5.3 Categorical Variables
+### Dummy/indicator variables are encoded to bring unordered categories into quantative models
+### using 0/1 for female/male is default, but can be hard to set prior for alpha (what is mean female height?) and it implies there is more uncertainty about male height since it includes both alpha and beta parameters, this may be seen by simulating from the prior for male and females
+### Another approach is to use an index approach (1,2,3,...,n) for dummy vars with command d$sex <- ifelse( d$male==1 , 2 , 1 )
+```{r echo = TRUE}
+data("Howell1")
+d <- Howell1
+
+mu_female <- rnorm(1e4,178,20)
+mu_male <- rnorm(1e4,178,20) + rnorm(1e4,0,10)
+precis( data.frame( mu_female , mu_male ) )
+
+d$sex <- ifelse( d$male==1 , 2 , 1 ) #1 female and 2 male
+# approximate the posterior using index variables using a[sex] to indicate there is a factor variable there and the model will estimate for each
+m5.8 <- quap( 
+    alist(
+      height ~ dnorm( mu , sigma ) ,
+      mu <- a[sex] ,
+      a[sex] ~ dnorm( 178 , 20 ) ,
+      sigma ~ dunif( 0 , 50 )
+    ) , data=d )
+precis( m5.8 , depth=2 ) #shows vectors of parameters (since a is a vector of length 2)
+
+#what is expected difference between males and females? extract samples from posterior and calc the difference. This is a contrast
+post <- extract.samples(m5.8)
+post$diff_fm <- post$a[,1] - post$a[,2]
+precis( post , depth=2 )
+```
+
+## now include multiple categories
+```{r echo = TRUE}
+data("milk")
+d <- milk
+#coerce to integer for index variables
+d$clade_id <- as.integer( d$clade )
+
+d$K <- scale( d$kcal.per.g )
+
+m5.9 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a[clade_id],
+    a[clade_id] ~ dnorm(0,0.5),
+    sigma ~ dexp(1)
+  ), data = d
+)
+
+labels <- paste( "a[" , 1:4 , "]:" , levels(d$clade) , sep="" )
+plot( precis( m5.9 , depth=2 , pars="a" ) , labels=labels ,
+xlab="expected kcal (std)" )
+
+## adding in another category
+set.seed(63)
+d$house <- sample( rep(1:4,each=8) , size=nrow(d) )
+
+m5.10 <- quap(
+    alist(
+      K ~ dnorm( mu , sigma ),
+      mu <- a[clade_id] + h[house],
+      a[clade_id] ~ dnorm( 0 , 0.5 ),
+      h[house] ~ dnorm( 0 , 0.5 ),
+      sigma ~ dexp( 1 )
+  ) , data=d )
+precis(m5.10, depth = 4)
 ```
