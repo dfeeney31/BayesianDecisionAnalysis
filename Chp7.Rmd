@@ -192,3 +192,81 @@ pWAIC <- sapply( 1:n_cases , function(i) var(logprob[i,]) )
 ## Summary so far: information divergence is a good measure of accuracy, but we need a penalizing aspect. Flat priors give bad information and regularizing priors will reduce sample fit, but may improve test fit (predictive accuracy). CV, WIAC, and PSIS-LOO let us quantify regularized accuracy
 
 ## Counterintuitively, do not just pick model with lowest criterion value and discard the rest. This discards relatively model accuracy in CV/PSIS/WIAC. Instead use model comparison to understand how variables influence prediction 
+
+```{r echo = TRUE}
+WAIC(m7.1) #provides WAIC (out of sample deviance), lppd, effective # parameters, and std error
+compare(m7.1, m7.2) #orders from best to worst WIAC.pWIAC is close to the # params but slightly under # dimensions in posterior
+plot(compare(m7.1, m7.2)) #filled in points are in sample deviance and open values WIAC
+
+```
+
+
+```{r echo=TRUE}
+library(rethinking)
+data(WaffleDivorce)
+d <- WaffleDivorce
+d$A <- standardize( d$MedianAgeMarriage )
+d$D <- standardize( d$Divorce )
+d$M <- standardize( d$Marriage )
+m5.1 <- quap(
+  alist(
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bA * A , #fit an intercept and a beta for median age of marraige against divorce
+    a ~ dnorm( 0 , 0.2 ) ,
+    bA ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data = d )
+
+m5.2 <- quap(
+  alist(
+    D ~ dnorm(mu,sigma),
+    mu <- a + bM * M,
+    a ~ dnorm(0,0.2),
+    bM ~ dnorm(0,0.5),
+    sigma ~ dexp(1)
+  ), data = d
+)
+
+m5.3 <- quap(
+  alist(
+    D ~ dnorm(mu,sigma),
+    mu <- a + bA * A + bM * M, 
+    a ~ dnorm(0,0.2),
+    bM ~ dnorm(0,0.5),
+    bA ~ dnorm(0,0.5),
+    sigma ~ dexp(1)
+  ), data = d
+)
+
+summary(m5.1)
+summary(m5.2)
+summary(m5.3) #marriage rate has little predictive power once bM is included
+
+compare( m5.1 , m5.2 , m5.3 , func=PSIS ) #note m5.1 is on top of m5.3 for testing data. The Pareto values > 1 indicates
+# we have samples that are likely outlier values and will be hard to predict by the model
+
+set.seed(24071847)
+PSIS_m5.3 <- PSIS(m5.3,pointwise=TRUE)
+set.seed(24071847)
+WAIC_m5.3 <- WAIC(m5.3,pointwise=TRUE)
+plot( PSIS_m5.3$k , WAIC_m5.3$penalty , xlab="PSIS Pareto k" ,
+ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+```
+
+## we can use a student T distribution which have thicker tails the the Gaussian
+
+```{r echo = TRUE}
+
+m5.3t <- quap(
+    alist(
+      D ~ dstudent( 2 , mu , sigma ) ,
+      mu <- a + bM*M + bA*A ,
+      a ~ dnorm( 0 , 0.2 ) ,
+      bM ~ dnorm( 0 , 0.5 ) ,
+      bA ~ dnorm( 0 , 0.5 ) ,
+      sigma ~ dexp( 1 )
+    ) , data = d )
+summary(m5.3t) #bA is slightly farther from 0 because Idaho has a low div rate and low marriage age.
+# when Ideaho was 'influential' using a Gaussian distribution (because the tails are smaller than student T), it reduced the
+# association between age and marriage. Now it is less influential because the prior has fat tails, so estimate slightly larger
+```

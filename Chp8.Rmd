@@ -1,0 +1,76 @@
+---
+title: "Chp8"
+author: "Dan Feeney"
+date: "4/21/2020"
+output: html_document
+---
+
+# Interaction effects
+```{r echo = TRUE}
+rm(list=ls())
+library(rethinking)
+data(rugged)
+
+#fitting a linear model between geographic ruggedness and GDP
+d <- rugged
+# make log version of outcome
+d$log_gdp <- log( d$rgdppc_2000 )
+# extract countries with GDP data
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+# rescale variables
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+
+#ruggedness is scaled to its max so 0 is not rugged at all and 1 is the most rugged. GDP is scaled log GDP/avg value, so 1 is average 0.8 is less than avg and 1.2 is more than avg
+```
+
+```{r echo = TRUE}
+m8.1 <- quap( 
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a + b*( rugged_std - 0.215 ) , #0.215 is average ruggedness
+    a ~ dnorm( 1 , 1 ) , 
+    b ~ dnorm( 0 , 1 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dd )
+
+# lets do some prior simulations
+set.seed(7)
+prior <- extract.prior( m8.1 )
+
+# set up the plot dimensions
+plot( NULL , xlim=c(0,1) , ylim=c(0.5,1.5) ,
+xlab="ruggedness" , ylab="log GDP" )
+abline( h=min(dd$log_gdp_std) , lty=2 )
+abline( h=max(dd$log_gdp_std) , lty=2 )
+
+# draw 50 lines from the prior
+rugged_seq <- seq( from=-0.1 , to=1.1 , length.out=30 )
+mu <- link( m8.1 , post=prior , data=data.frame(rugged_std=rugged_seq) )
+for ( i in 1:50 ) lines( rugged_seq , mu[i,] , col=col.alpha("black",0.3) )
+
+## this is an implausible prior because it includes highly unrealistic values
+
+# narrow the SD for alpha and beta and you get a more reasonbale prior
+m8.1 <- quap(
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a + b*( rugged_std - 0.215 ) ,
+    a ~ dnorm( 1 , 0.1 ) ,
+    b ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp(1)
+  ) , data=dd )
+prior <- extract.prior(m8.1)
+# set up the plot dimensions
+plot( NULL , xlim=c(0,1) , ylim=c(0.5,1.5) ,
+xlab="ruggedness" , ylab="log GDP" )
+abline( h=min(dd$log_gdp_std) , lty=2 )
+abline( h=max(dd$log_gdp_std) , lty=2 )
+
+# draw 50 lines from the prior
+rugged_seq <- seq( from=-0.1 , to=1.1 , length.out=30 )
+mu <- link( m8.1 , post=prior , data=data.frame(rugged_std=rugged_seq) )
+for ( i in 1:50 ) lines( rugged_seq , mu[i,] , col=col.alpha("black",0.3) )
+
+precis(m8.1)
+```
