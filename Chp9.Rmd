@@ -1,0 +1,89 @@
+---
+title: "Chp9"
+author: "Dan Feeney"
+date: "4/22/2020"
+output: html_document
+---
+
+## Markov Chain Monte Carlo simulations.
+### We no longer assume a multivariate Normal distribution
+```{r echo = TRUE}
+library(rethinking)
+#replicating the King Markov island hopping. Metropolis Algorithm
+num_weeks <- 1e5
+positions <- rep(0,num_weeks)
+current <- 10
+for ( i in 1:num_weeks ) {
+  # record current position
+    positions[i] <- current
+    # flip coin to generate proposal
+    proposal <- current + sample( c(-1,1) , size=1 )
+  # now make sure he loops around the archipelago
+    if ( proposal < 1 ) proposal <- 10
+    if ( proposal > 10 ) proposal <- 1
+    # move?
+    prob_move <- proposal/current
+    current <- ifelse( runif(1) < prob_move , proposal , current )
+}
+plot( 1:100 , positions[1:100] )
+#In this, the islands are our parameter values, population sizes are posterior probabilities at each parameter value, and weeks are samples from the joint distribution of parameters of the model
+
+#There is also Gibbs sampling: which allows us to sample asymmetrically (i.e. for parameters like SD that are bounded at 0). This comes from the Metropolis-Hastings algorithm. This becomes inefficient in high-parameter/high dimensional models
+
+# High correlation between parameters becomes a problem as algos will get stuck in regions due to "concentration of measure"
+# the combo of parameters that maximizes the posterior probability (the mode), is not actually a region that is highly plausible
+# 
+D <- 10
+T <- 1e3
+Y <- rmvnorm(T,rep(0,D),diag(D))
+rad_dist <- function( Y ) sqrt( sum(Y^2) )
+
+Rd <- sapply( 1:T , function(i) rad_dist( Y[i,] ) )
+dens( Rd )
+```
+### The value of 0 is peak of probability, but as you move up in dimensionality, almost no samples occur near the peak because of the strange curves in param values. MCMC solves this.
+## Hamiltonian Monte Carlo
+
+```{r echo = TRUE}
+data(rugged)
+d <- rugged
+d$log_gdp <- log(d$rgdppc_2000)
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+
+#previous method
+m8.3 <- quap( 
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+    a[cid] ~ dnorm( 1 , 0.1 ) ,
+    b[cid] ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp( 1 )
+    ) , data=dd )
+  precis( m8.3 , depth=2 )
+  
+  #to use hamiltonian monte carlo, we need to 1) preprocess all variables: make any transformatoins before fitting the model 2) once they are trimmed down, make a new DF with only these variables
+dat_slim <- list(
+  log_gdp_std = dd$log_gdp_std,
+  rugged_std = dd$rugged_std,
+  cid = as.integer( dd$cid )
+)
+str(dat_slim)
+
+
+m9.1 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+    a[cid] ~ dnorm( 1 , 0.1 ) ,
+    b[cid] ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dat_slim , chains=4 , cores=4 )
+
+precis(m9.1, depth = 2)
+pairs(m9.1)
+```
+
+## Hamiltonian Monte Carlo is better than random, the samples are anti correlated
