@@ -1,0 +1,80 @@
+---
+title: "Chp12"
+author: "Dan Feeney"
+date: "4/28/2020"
+output: html_document
+---
+
+```{r}
+rm(list=ls())
+library(rethinking)
+data(reedfrogs)
+d <- reedfrogs
+
+```
+
+## in this case, we will fit a verying intercept model with a different intercept for each tank. This is similar to a random effect in linear mixed models. In this data, Si ~ Binomial(Ni,pi), logit(Pi) = alpha(tanki), alphaj ~ normal(0,1.5) for j = 1,...48
+
+```{r}
+# make the tank cluster variable
+d$tank <- 1:nrow(d)
+dat <- list(
+  S = d$surv,
+  N = d$density,
+  tank = d$tank )
+# approximate posterior
+m13.1 <- ulam(
+  alist(
+    S ~ dbinom( N , p ) ,
+    logit(p) <- a[tank] ,
+    a[tank] ~ dnorm( 0 , 1.5 )
+  ), data=dat , chains=4 , log_lik=TRUE )
+precis(m13.1, depth = 2) #Same as before, we have an estimate for each tank
+```
+
+##The multilevel model pools information across tasks. We make the alpha parameters a function of alpha bar and sigma. Gaussian distribution with mean alpha bar and SD sigma is the prior for each tank's intercept, but that prior itself has two priors for alpha and sigma. These lower-level params are hyperparameters as they are parameters for parameters
+
+```{r}
+m13.2 <- ulam( 
+  alist(
+    S ~ dbinom( N , p ) ,
+    logit(p) <- a[tank] ,
+    a[tank] ~ dnorm( a_bar , sigma ) ,
+    a_bar ~ dnorm( 0 , 1.5 ) ,
+    sigma ~ dexp( 1 )
+  ), data=dat , chains=4 , log_lik=TRUE )
+compare(m13.1, m13.2) #There are actually only 21 effective parameters in the hierarchical model because it shrinks the intercepts towards the mean intercept (it learns more aggressively). 
+precis(m13.2, depth = 2)
+```
+
+## multiple clusters. Chimp example
+## Li ~ binomial(1,Pi), logit(Pi) = a(actor)i+lambdablock1+Betatreatment.
+### each cluster gets its own vector of params
+```{r}
+
+library(rethinking)
+data(chimpanzees)
+d <- chimpanzees
+d$treatment <- 1 + d$prosoc_left + 2*d$condition
+dat_list <- list(
+pulled_left = d$pulled_left,
+actor = d$actor,
+block_id = d$block,
+treatment = as.integer(d$treatment) )
+set.seed(13)
+m13.4 <- ulam(
+  alist(
+    pulled_left ~ dbinom( 1 , p ) ,
+    logit(p) <- a[actor] + g[block_id] + b[treatment] ,
+    b[treatment] ~ dnorm( 0 , 0.5 ),
+    ## adaptive priors
+    a[actor] ~ dnorm( a_bar , sigma_a ),
+    g[block_id] ~ dnorm( 0 , sigma_g ),
+    ## hyper-priors
+    a_bar ~ dnorm( 0 , 1.5 ),
+    sigma_a ~ dexp(1),
+    sigma_g ~ dexp(1)
+  ) , data=dat_list , chains=4 , cores=4 )
+precis( m13.4 , depth=2 )
+plot( precis(m13.4,depth=2) ) # also plot
+```
