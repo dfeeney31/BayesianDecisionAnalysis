@@ -1,0 +1,84 @@
+---
+title: "Chp13"
+author: "Dan Feeney"
+date: "5/7/2020"
+output: html_document
+---
+
+# Multilevel models and mixtures
+```{r}
+library(rethinking)
+rm(list=ls())
+
+data(reedfrogs)
+d <- reedfrogs
+
+#interestied in # surviving out of initial pop (density)
+```
+
+## Starting with a varying (random) interceps model for each tank
+### Si ~ Binom(Ni,Pi), logit(Pi) = alpha(tanki), alphaj ~ Normal(0,1.5), for j = 1:48
+### the posterior will have 48 interceps, one for each tank
+```{r}
+# make the tank cluster variable
+d$tank <- 1:nrow(d)
+dat <- list(
+  S = d$surv,
+  N = d$density,
+  tank = d$tank )
+# approximate posterior
+m13.1 <- ulam(
+  alist(
+  S ~ dbinom( N , p ) ,
+  logit(p) <- a[tank] ,
+  a[tank] ~ dnorm( 0 , 1.5 )
+  ), data=dat , chains=4 , log_lik=TRUE )
+
+#to get tank's expected probability, take an intercept and logistic transform it 
+```
+
+## Now, we do a multilevel model
+### Si ~ Binom(Ni,Pi)
+### logit(Pi) ~ Alpha(Tanki)
+### Alphaj ~ Normal(alphaBar, sigma) adaptive prior
+### Alphabar ~ Normal(0,1.5) prior for average tank
+### Sigma ~ exponential(1) prior for SD of tanks
+### This means the prior for each tank's intercept is a function of alphaBar and sigma, this is where multilevel comes from. These alphabar and sigma parameters are hyperparameters and priors are hyperpriors.
+### Compute the posterior computes both levels simultaneously. Now, you can't use quadratic approximation because it can't see levels
+```{r}
+m13.2 <- ulam(
+  alist(
+    S ~ dbinom( N , p ) ,
+    logit(p) <- a[tank] ,
+    a[tank] ~ dnorm( a_bar , sigma ) , #prior that is 'adaptive'
+    a_bar ~ dnorm( 0 , 1.5 ) , #prior for average tank
+    sigma ~ dexp( 1 ) #prior for SD of tanks
+  ), data=dat , chains=4 , log_lik=TRUE )
+
+compare( m13.1 , m13.2 )
+```
+
+## Model with the adaptive prior has FEWER parameters than the simple model because of the regularizing prior, which causes shrinkgage (each intercept is shrunk towards mean, alphaBar). The mean of the sigmas is 1.6, and this regularization has been learned from the data 
+```{r}
+# extract Stan samples
+post <- extract.samples(m13.2)
+# also transform to probability with logistic
+d$propsurv.est <- logistic( apply( post$a , 2 , mean ) )
+
+# display raw proportions surviving in each tank
+plot( d$propsurv , ylim=c(0,1) , pch=16 , xaxt="n" ,
+  xlab="tank" , ylab="proportion survival" , col=rangi2 )
+  axis( 1 , at=c(1,16,32,48) , labels=c(1,16,32,48) )
+# overlay posterior means
+points( d$propsurv.est )
+# mark posterior mean probability across tanks
+abline( h=mean(inv_logit(post$a_bar)) , lty=2 )
+# draw vertical dividers between tank densities
+abline( v=16.5 , lwd=0.5 )
+abline( v=32.5 , lwd=0.5 )
+text( 8 , 0 , "small tanks" )
+text( 16+8 , 0 , "medium tanks" )
+text( 32+8 , 0 , "large tanks" )
+
+```
+
